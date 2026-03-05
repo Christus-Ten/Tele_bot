@@ -196,7 +196,7 @@ async function onStart({ bot, message, msg, chatId, args, usages }) {
 
     global.teamnix.replies.set(sentMsg.message_id, {
       nix,
-      commandName: nix.name, // Ajout explicite du nom de la commande
+      commandName: nix.name,
       type: "pinterest_reply",
       authorId: msg.from.id,
       allImageUrls,
@@ -256,10 +256,9 @@ async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
         if (err) console.error("Erreur suppression canvas:", err);
       });
 
-      // Stockage explicite de toutes les données, y compris nix et commandName
       global.teamnix.replies.set(sentMsg.message_id, {
         nix: data.nix,
-        commandName: data.nix.name, // Important pour que le système retrouve la commande
+        commandName: data.nix.name,
         type: data.type,
         authorId: data.authorId,
         allImageUrls: data.allImageUrls,
@@ -270,9 +269,13 @@ async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
         displayedMap: nextDisplayedMap,
         displayCount: nextDisplayedMap.length
       });
+
+      // Supprimer le message de chargement (optionnel)
+      // await bot.deleteMessage(chatId, loadingMsg.message_id).catch(() => {});
       return;
     }
 
+    // Traitement d'un numéro
     const number = parseInt(input, 10);
     if (isNaN(number) || number <= 0) {
       return bot.sendMessage(chatId, `❌ Répondez avec un numéro (du canvas) pour obtenir l’image, ou “next” pour charger d’autres pages.`, {
@@ -294,10 +297,30 @@ async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
     }
 
     const imageUrl = data.allImageUrls[originalIndex];
-    await bot.sendPhoto(chatId, imageUrl, {
-      caption: `Image #${number} pour la requête "${data.query}" :`,
-      reply_to_message_id: msg.message_id
-    });
+
+    // Télécharger l'image et l'envoyer en local (plus fiable que l'URL directe)
+    try {
+      const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+      const buffer = Buffer.from(response.data);
+      const cacheDir = path.join(process.cwd(), 'cache');
+      if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+      const imagePath = path.join(cacheDir, `pinterest_img_${Date.now()}.jpg`);
+      fs.writeFileSync(imagePath, buffer);
+
+      await bot.sendPhoto(chatId, fs.createReadStream(imagePath), {
+        caption: `Image #${number} pour la requête "${data.query}" :`,
+        reply_to_message_id: msg.message_id
+      });
+
+      fs.unlink(imagePath, (err) => {
+        if (err) console.error("Erreur suppression image:", err);
+      });
+    } catch (e) {
+      console.error("Erreur téléchargement/envoi de l'image:", e);
+      return bot.sendMessage(chatId, `❌ Impossible de récupérer l'image. L'URL est peut-être expirée ou inaccessible.`, {
+        reply_to_message_id: msg.message_id
+      });
+    }
 
   } catch (err) {
     console.error("Erreur dans pinterest onReply:", err);
