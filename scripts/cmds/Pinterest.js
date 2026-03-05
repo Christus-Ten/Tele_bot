@@ -141,7 +141,8 @@ async function onStart({ bot, message, msg, chatId, args, usages }) {
       { reply_to_message_id: msg.message_id });
     processingMessageId = processingMsg.message_id;
 
-    const res = await axios.get(`https://egret-driving-cattle.ngrok-free.app/api/pin?query=${encodeURIComponent(query)}&num=90`);
+    // API plus stable
+    const res = await axios.get(`https://pinterest-api-umber.vercel.app/api/pin?query=${encodeURIComponent(query)}&num=90`);
     const allImageUrls = res.data.results || [];
 
     if (allImageUrls.length === 0) {
@@ -204,7 +205,7 @@ async function onStart({ bot, message, msg, chatId, args, usages }) {
     if (processingMessageId) {
       try { await bot.deleteMessage(chatId, processingMessageId); } catch (e) { }
     }
-    bot.sendMessage(chatId, "Une erreur est survenue. Le serveur ou l'API peut être indisponible.", 
+    bot.sendMessage(chatId, "Une erreur est survenue. Vérifiez que l'API est accessible ou réessayez plus tard.", 
       { reply_to_message_id: msg.message_id });
   }
 }
