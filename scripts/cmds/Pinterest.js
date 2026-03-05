@@ -194,9 +194,12 @@ async function onStart({ bot, message, msg, chatId, args, usages }) {
       if (err) console.error("Erreur suppression canvas:", err);
     });
 
+    // Stockage initial avec tous les identifiants possibles
     global.teamnix.replies.set(sentMsg.message_id, {
-      nix,
+      nix: nix,
       commandName: nix.name,
+      name: nix.name,
+      cmd: nix.name,
       type: "pinterest_reply",
       authorId: msg.from.id,
       allImageUrls,
@@ -256,9 +259,12 @@ async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
         if (err) console.error("Erreur suppression canvas:", err);
       });
 
+      // Stockage pour la nouvelle page avec tous les identifiants
       global.teamnix.replies.set(sentMsg.message_id, {
-        nix: data.nix,
-        commandName: data.nix.name,
+        nix: data.nix || nix,
+        commandName: data.nix ? data.nix.name : nix.name,
+        name: data.nix ? data.nix.name : nix.name,
+        cmd: data.nix ? data.nix.name : nix.name,
         type: data.type,
         authorId: data.authorId,
         allImageUrls: data.allImageUrls,
@@ -269,9 +275,6 @@ async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
         displayedMap: nextDisplayedMap,
         displayCount: nextDisplayedMap.length
       });
-
-      // Supprimer le message de chargement (optionnel)
-      // await bot.deleteMessage(chatId, loadingMsg.message_id).catch(() => {});
       return;
     }
 
@@ -298,7 +301,7 @@ async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
 
     const imageUrl = data.allImageUrls[originalIndex];
 
-    // Télécharger l'image et l'envoyer en local (plus fiable que l'URL directe)
+    // Télécharger l'image et l'envoyer en local
     try {
       const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
       const buffer = Buffer.from(response.data);
