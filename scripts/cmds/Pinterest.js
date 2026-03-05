@@ -196,6 +196,7 @@ async function onStart({ bot, message, msg, chatId, args, usages }) {
 
     global.teamnix.replies.set(sentMsg.message_id, {
       nix,
+      commandName: nix.name, // Ajout explicite du nom de la commande
       type: "pinterest_reply",
       authorId: msg.from.id,
       allImageUrls,
@@ -255,9 +256,10 @@ async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
         if (err) console.error("Erreur suppression canvas:", err);
       });
 
-      // ✅ Correction : on recopie explicitement nix depuis data
+      // Stockage explicite de toutes les données, y compris nix et commandName
       global.teamnix.replies.set(sentMsg.message_id, {
         nix: data.nix,
+        commandName: data.nix.name, // Important pour que le système retrouve la commande
         type: data.type,
         authorId: data.authorId,
         allImageUrls: data.allImageUrls,
