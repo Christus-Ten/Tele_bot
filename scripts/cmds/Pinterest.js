@@ -255,8 +255,15 @@ async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
         if (err) console.error("Erreur suppression canvas:", err);
       });
 
+      // ✅ Correction : on recopie explicitement nix depuis data
       global.teamnix.replies.set(sentMsg.message_id, {
-        ...data,
+        nix: data.nix,
+        type: data.type,
+        authorId: data.authorId,
+        allImageUrls: data.allImageUrls,
+        query: data.query,
+        imagesPerPage: data.imagesPerPage,
+        totalPages: data.totalPages,
         currentPage: nextPage,
         displayedMap: nextDisplayedMap,
         displayCount: nextDisplayedMap.length
