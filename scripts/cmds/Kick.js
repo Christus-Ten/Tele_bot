@@ -3,7 +3,7 @@ const nix = {
   version: "1.0",
   aliases: [],
   description: "Expulser un utilisateur du groupe",
-  author: "Unknown",
+  author: "Christus",
   prefix: true,
   category: "moderation",
   role: 1,
