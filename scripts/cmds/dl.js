@@ -182,7 +182,7 @@ async function handleDownload(bot, msg, url) {
 const nix = {
   name: 'autodl',
   version: '3.4.0',
-  aliases: [],
+  aliases: ['dl'],
   description: 'Auto download video/audio/image from YouTube, Spotify, Imgur, Pinterest, ImgBB and more',
   author: 'Christus',
   prefix: false, // listens to all messages
