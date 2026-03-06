@@ -1,218 +1,197 @@
-const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
+const axios = require("axios");
+const fs = require("fs");
+const path = require("path");
 
-// Helper to get API base URL (unused here but kept for consistency)
-async function getBaseApiUrl() {
-  return 'https://www.noobs-api.rf.gd/dipto';
-}
-
-// Regex patterns for supported platforms
-const patterns = {
-  y: /(youtube\.com|youtu\.be)/i,
-  s: /(spotify\.com|spotify\.link)/i,
-  i: /(imgur\.com|i\.imgur\.com)/i,
-  p: /(pinterest\.com|pin\.it)/i,
-  b: /(imgbb\.com|ibb\.co)/i
+// Métadonnées de la commande
+const nix = {
+  name: "autodl",
+  keyword: [
+    "https://youtube.com",
+    "https://youtu.be",
+    "https://m.youtube.com",
+    "https://open.spotify.com",
+    "https://spotify.link",
+    "https://imgur.com",
+    "https://i.imgur.com",
+    "https://pinterest.com",
+    "https://pin.it",
+    "https://imgbb.com",
+    "https://ibb.co",
+  ],
+  aliases: ['dl'],
+  version: "3.4",
+  author: "Aryan Chauhan",
+  description: "Download videos, audio, and images from social media.",
+  guide: ["<url> ou envoyez un lien"],
+  cooldown: 0,
+  type: "anyone",
+  category: "media",
 };
 
-function classifyUrl(url) {
+// Fonction utilitaire de détection de plateforme (copiée du GoatBot)
+const platformRegex = {
+  youtube: /(youtube\.com|youtu\.be)/i,
+  spotify: /(spotify\.com|spotify\.link)/i,
+  image: /(imgur\.com|i\.imgur\.com|pinterest\.com|pin\.it|imgbb\.com|ibb\.co)/i,
+};
+
+function detectPlatform(url) {
   return {
-    y: patterns.y.test(url),
-    s: patterns.s.test(url),
-    i: patterns.i.test(url) || patterns.p.test(url) || patterns.b.test(url)
+    youtube: platformRegex.youtube.test(url),
+    spotify: platformRegex.spotify.test(url),
+    image: platformRegex.image.test(url),
   };
 }
 
-async function handleDownload(bot, msg, url) {
-  const chatId = msg.chat.id;
-  const messageId = msg.message_id;
-
-  // Send "processing" message
-  let waitMsg;
-  try {
-    waitMsg = await bot.sendMessage(chatId, '⏳ Processing your request...', {
-      reply_to_message_id: messageId
-    });
-  } catch (e) {
-    console.error('Failed to send processing message:', e);
-    return;
-  }
+// Fonction principale de traitement
+async function processDownload(url, bot, chatId, replyToMessageId) {
+  // Envoyer un message d'attente
+  const waitMsg = await bot.sendMessage(chatId, "⏳ Téléchargement en cours...", {
+    reply_to_message_id: replyToMessageId,
+  });
   const waitMsgId = waitMsg.message_id;
 
-  let apiResponse;
+  let tempFiles = [];
+
   try {
-    apiResponse = await axios.get(
+    // Appel à l'API de téléchargement
+    const apiResponse = await axios.get(
       `https://downvid.onrender.com/api/download?url=${encodeURIComponent(url)}`,
       { timeout: 60000 }
     );
-  } catch (error) {
-    await bot.deleteMessage(chatId, waitMsgId).catch(() => {});
-    await bot.sendMessage(chatId, `❎ Error: Failed to fetch from API`, {
-      reply_to_message_id: messageId
-    }).catch(() => {});
-    return;
-  }
 
-  const data = apiResponse?.data;
-  if (!data || data.status !== 'success') {
-    await bot.deleteMessage(chatId, waitMsgId).catch(() => {});
-    await bot.sendMessage(chatId, `❎ Error: Invalid API response`, {
-      reply_to_message_id: messageId
-    }).catch(() => {});
-    return;
-  }
-
-  // Extract media URLs
-  const meta = data?.data?.data || {};
-  const videoUrl = data.video || meta.nowm || null;
-  const audioUrl = data.audio || null;
-  const imageUrl = data.image || meta.image || null;
-
-  const classification = classifyUrl(url);
-  let mediaItems = [];
-  let caption = '✅ Downloaded\n\n';
-
-  if (classification.s) {
-    if (!audioUrl) {
-      await bot.deleteMessage(chatId, waitMsgId).catch(() => {});
-      await bot.sendMessage(chatId, `❎ Error: No audio found`, {
-        reply_to_message_id: messageId
-      }).catch(() => {});
-      return;
+    const data = apiResponse?.data;
+    if (!data || data.status !== "success") {
+      throw new Error("Échec de l'API ou lien non supporté.");
     }
-    mediaItems.push({ url: audioUrl, type: 'a' });
-    caption = '✅ Spotify Audio 🎧\n\n';
-  } else if (classification.y) {
-    if (!videoUrl) {
-      await bot.deleteMessage(chatId, waitMsgId).catch(() => {});
-      await bot.sendMessage(chatId, `❎ Error: No video found`, {
-        reply_to_message_id: messageId
-      }).catch(() => {});
-      return;
+
+    const mediaData = data?.data?.data || {};
+    const videoUrl = data.video || mediaData.nowm || null;
+    const audioUrl = data.audio || null;
+    const imageUrl = data.image || mediaData.image || null;
+    const title = mediaData.title || "Média";
+
+    const platform = detectPlatform(url);
+    let mediaToSend = null;
+
+    // Sélection du média selon la plateforme
+    if (platform.spotify) {
+      if (!audioUrl) throw new Error("Aucun audio trouvé pour Spotify.");
+      mediaToSend = { url: audioUrl, type: "audio", caption: "✅ Spotify Audio 🎧\n\n" };
+    } else if (platform.youtube) {
+      if (!videoUrl) throw new Error("Aucune vidéo trouvée pour YouTube.");
+      mediaToSend = { url: videoUrl, type: "video", caption: "✅ YouTube Video 🎬\n\n" };
+    } else if (platform.image) {
+      if (!imageUrl && !videoUrl) throw new Error("Aucune image trouvée.");
+      mediaToSend = { url: imageUrl || videoUrl, type: "photo", caption: "✅ Image 🖼️\n\n" };
+    } else {
+      // Autres plateformes : priorité vidéo, puis audio, puis image
+      if (videoUrl) mediaToSend = { url: videoUrl, type: "video", caption: "✅ Vidéo\n\n" };
+      else if (audioUrl) mediaToSend = { url: audioUrl, type: "audio", caption: "✅ Audio\n\n" };
+      else if (imageUrl) mediaToSend = { url: imageUrl, type: "photo", caption: "✅ Image\n\n" };
+      else throw new Error("Aucun contenu téléchargeable trouvé.");
     }
-    mediaItems.push({ url: videoUrl, type: 'v' });
-    caption = '✅ YouTube Video 🎬\n\n';
-  } else if (classification.i) {
-    if (!imageUrl && !videoUrl) {
-      await bot.deleteMessage(chatId, waitMsgId).catch(() => {});
-      await bot.sendMessage(chatId, `❎ Error: No image or video found`, {
-        reply_to_message_id: messageId
-      }).catch(() => {});
-      return;
-    }
-    mediaItems.push({ url: imageUrl || videoUrl, type: imageUrl ? 'i' : 'v' });
-    caption = '✅ Image 🖼️\n\n';
-  } else {
-    // Generic: try video, audio, image in order
-    if (videoUrl) mediaItems.push({ url: videoUrl, type: 'v' });
-    else if (audioUrl) mediaItems.push({ url: audioUrl, type: 'a' });
-    else if (imageUrl) mediaItems.push({ url: imageUrl, type: 'i' });
-    else {
-      await bot.deleteMessage(chatId, waitMsgId).catch(() => {});
-      await bot.sendMessage(chatId, `❎ Error: No downloadable media found`, {
-        reply_to_message_id: messageId
-      }).catch(() => {});
-      return;
-    }
-  }
 
-  // Ensure cache directory exists
-  const cacheDir = path.join(__dirname, 'cache');
-  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+    // Création du dossier temporaire
+    const tempDir = path.join(__dirname, "temp");
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
-  const downloadedFiles = [];
-  const filePaths = [];
+    // Déterminer l'extension et le chemin
+    const ext = mediaToSend.type === "audio" ? "mp3" : mediaToSend.type === "photo" ? "jpg" : "mp4";
+    const filePath = path.join(tempDir, `autodl_${Date.now()}_${Math.random()}.${ext}`);
 
-  try {
-    for (const item of mediaItems) {
-      const ext = item.type === 'a' ? 'mp3' : item.type === 'i' ? 'jpg' : 'mp4';
-      const filePath = path.join(cacheDir, `autodl_${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`);
+    // Télécharger le fichier
+    const fileResponse = await axios({
+      method: "GET",
+      url: mediaToSend.url,
+      responseType: "stream",
+      timeout: 120000,
+    });
 
-      const response = await axios.get(item.url, {
-        responseType: 'arraybuffer',
-        timeout: 120000
+    const writer = fs.createWriteStream(filePath);
+    fileResponse.data.pipe(writer);
+    await new Promise((resolve, reject) => {
+      writer.on("finish", resolve);
+      writer.on("error", reject);
+    });
+
+    tempFiles.push(filePath);
+
+    // Supprimer le message d'attente
+    await bot.deleteMessage(chatId, waitMsgId);
+
+    // Construire la légende finale
+    const caption = `${mediaToSend.caption}📌 ${title}`;
+
+    // Envoyer selon le type
+    if (mediaToSend.type === "video") {
+      await bot.sendVideo(chatId, filePath, {
+        caption,
+        reply_to_message_id: replyToMessageId,
       });
-
-      fs.writeFileSync(filePath, Buffer.from(response.data));
-      filePaths.push(filePath);
-
-      // Determine Telegram media type
-      let telegramType;
-      if (item.type === 'a') telegramType = 'audio';
-      else if (item.type === 'i') telegramType = 'photo';
-      else telegramType = 'video';
-
-      downloadedFiles.push({
-        type: telegramType,
-        media: filePath  // path string works with sendMediaGroup
+    } else if (mediaToSend.type === "audio") {
+      await bot.sendAudio(chatId, filePath, {
+        caption,
+        reply_to_message_id: replyToMessageId,
+      });
+    } else if (mediaToSend.type === "photo") {
+      await bot.sendPhoto(chatId, filePath, {
+        caption,
+        reply_to_message_id: replyToMessageId,
       });
     }
 
-    // Add caption to the first media
-    if (downloadedFiles.length > 0) {
-      downloadedFiles[0].caption = `${caption}📌 ${meta.title || 'Media'}`;
-    }
-
-    // Send media group
-    await bot.sendMediaGroup(chatId, downloadedFiles, {
-      reply_to_message_id: messageId
-    });
-
-    // Delete processing message
-    await bot.deleteMessage(chatId, waitMsgId).catch(() => {});
-
-    // Clean up files
-    filePaths.forEach(p => {
-      try { fs.unlinkSync(p); } catch (e) {}
-    });
+    // Nettoyage
+    fs.unlinkSync(filePath);
   } catch (error) {
-    console.error('Download/send error:', error);
-    // Clean up files
-    filePaths.forEach(p => {
-      try { fs.unlinkSync(p); } catch (e) {}
+    // Nettoyer les fichiers temporaires en cas d'erreur
+    tempFiles.forEach((f) => {
+      try {
+        fs.unlinkSync(f);
+      } catch {}
     });
-    await bot.deleteMessage(chatId, waitMsgId).catch(() => {});
-    await bot.sendMessage(chatId, `❎ Error: ${error.message}`, {
-      reply_to_message_id: messageId
-    }).catch(() => {});
+
+    // Supprimer le message d'attente s'il existe encore
+    try {
+      await bot.deleteMessage(chatId, waitMsgId);
+    } catch {}
+
+    // Envoyer le message d'erreur
+    await bot.sendMessage(chatId, `❌ Erreur : ${error.message}`, {
+      reply_to_message_id: replyToMessageId,
+    });
   }
 }
 
-const nix = {
-  name: 'autodl',
-  version: '3.4.0',
-  aliases: ['dl'],
-  description: 'Auto download video/audio/image from YouTube, Spotify, Imgur, Pinterest, ImgBB and more',
-  author: 'Christus',
-  prefix: false, // listens to all messages
-  category: 'media',
-  role: 0,
-  cooldown: 0,
-  guide: 'Just send a supported link (YouTube, Spotify, Imgur, Pinterest, ImgBB, etc.) and the bot will download the media automatically. You can also use /autodl <url>'
-};
-
-async function onStart({ bot, msg, chatId, args }) {
-  const url = args.join(' ').match(/https?:\/\/\S+/i)?.[0];
+// Lancement explicite de la commande (ex: /autodl https://...)
+async function onStart({ bot, chatId, args, msg }) {
+  const url = args.join(" ").match(/https?:\/\/\S+/i)?.[0];
   if (!url) {
-    // Show info if no URL provided
     await bot.sendMessage(
       chatId,
-      '🔍 *Auto Downloader Active*\n\nSend me a link from YouTube, Spotify, Imgur, Pinterest, ImgBB, etc., and I will download the media for you.\n\nYou can also use `/autodl <url>`',
-      {
-        parse_mode: 'Markdown',
-        reply_to_message_id: msg?.message_id
-      }
+      "Envoie moi un lien YouTube, Spotify, Imgur, Pinterest ou ImgBB, et je téléchargerai le contenu pour toi !",
+      { parse_mode: "HTML" }
     );
     return;
   }
-  await handleDownload(bot, msg, url);
+  await processDownload(url, bot, chatId, msg.message_id);
 }
 
-async function onChat({ bot, msg }) {
-  const url = msg.text?.match(/https?:\/\/\S+/i)?.[0];
+// Détection automatique des liens dans les messages
+async function onWord({ bot, msg, chatId }) {
+  const messageText = msg.link_preview_options?.url || msg.text || "";
+  // Vérifier si le message contient une URL correspondant à un des mots-clés
+  const hasKeyword = nix.keyword.some((prefix) => messageText.startsWith(prefix));
+  if (!hasKeyword) return;
+
+  const url = messageText.match(/https?:\/\/\S+/i)?.[0];
   if (!url) return;
-  await handleDownload(bot, msg, url);
+
+  await processDownload(url, bot, chatId, msg.message_id);
 }
 
-module.exports = { onStart, onChat, nix };
+module.exports = {
+  nix,
+  onStart,
+  onWord,
+};
