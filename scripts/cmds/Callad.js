@@ -3,7 +3,6 @@ const fs = require("fs");
 const path = require("path");
 
 const configPath = path.join(__dirname, "..", "..", "config.json");
-const replyContext = new Map();
 
 function loadConfig() {
   try {
@@ -76,32 +75,35 @@ async function sendWithAttachments(bot, chatId, text, msg, replyToMsgId = null) 
   }
 
   const mainMsg = await bot.sendMessage(chatId, text, { reply_to_message_id: replyToMsgId });
+  const messageIds = [mainMsg.message_id];
 
   for (const att of attachments) {
     try {
       const ext = att.type === "photo" ? "jpg" : att.type === "video" ? "mp4" : "mp3";
       const filePath = await downloadFile(att.fileId, bot, ext);
+      let sent;
       if (att.type === "photo") {
-        await bot.sendPhoto(chatId, filePath, { reply_to_message_id: mainMsg.message_id });
+        sent = await bot.sendPhoto(chatId, filePath, { reply_to_message_id: mainMsg.message_id });
       } else if (att.type === "video") {
-        await bot.sendVideo(chatId, filePath, { reply_to_message_id: mainMsg.message_id });
+        sent = await bot.sendVideo(chatId, filePath, { reply_to_message_id: mainMsg.message_id });
       } else if (att.type === "audio") {
-        await bot.sendAudio(chatId, filePath, { reply_to_message_id: mainMsg.message_id });
+        sent = await bot.sendAudio(chatId, filePath, { reply_to_message_id: mainMsg.message_id });
       }
+      if (sent) messageIds.push(sent.message_id);
       fs.unlinkSync(filePath);
     } catch (e) {
       console.error("Failed to send attachment", e);
     }
   }
 
-  return mainMsg;
+  return { mainMsg, messageIds };
 }
 
 const nix = {
   name: "callad",
   aliases: [],
   version: "1.7",
-  author: "Christus",
+  author: "NTKhang",
   description: "Envoyer un rapport, suggestion, bug à l'admin du bot.",
   guide: ["/callad <message>", "Répondre à un message du bot pour échanger"],
   cooldown: 5,
@@ -113,54 +115,6 @@ async function onStart({ bot, msg, chatId, userId, args }) {
   const config = loadConfig();
   const admins = config.admin.map(String);
   const isAdmin = admins.includes(String(userId));
-
-  const replied = msg.reply_to_message;
-  const context = replied && replyContext.get(replied.message_id);
-
-  if (context) {
-    const { type, userThreadId, userMsgId, adminId } = context;
-    const senderName = msg.from.first_name + (msg.from.last_name ? ` ${msg.from.last_name}` : "");
-
-    if (type === "userCallAdmin" && isAdmin) {
-      const replyText = getLang("reply", senderName, args.join(" ") || " ");
-      try {
-        const sent = await sendWithAttachments(bot, userThreadId, replyText, msg, userMsgId);
-        replyContext.set(sent.message_id, {
-          type: "adminReply",
-          userThreadId: chatId,
-          userMsgId: sent.message_id,
-          adminId: userId
-        });
-        await bot.sendMessage(chatId, getLang("replyUserSuccess"), { reply_to_message_id: msg.message_id });
-      } catch (e) {
-        console.error("Error sending admin reply to user:", e);
-        await bot.sendMessage(chatId, "❌ Erreur lors de l'envoi de la réponse à l'utilisateur.", { reply_to_message_id: msg.message_id });
-      }
-    } else if (type === "adminReply" && !isAdmin) {
-      const groupInfo = chatId > 0 ? "" : await bot.getChat(chatId).then(c => getLang("sendByGroup", c.title, chatId)).catch(() => "");
-      const feedbackText = getLang("feedback", senderName, userId, groupInfo, args.join(" ") || " ");
-      try {
-        const sent = await sendWithAttachments(bot, adminId, feedbackText, msg);
-        replyContext.set(sent.message_id, {
-          type: "userCallAdmin",
-          userThreadId: chatId,
-          userMsgId: msg.message_id,
-          adminId: userId
-        });
-        await bot.sendMessage(chatId, getLang("replySuccess"), { reply_to_message_id: msg.message_id });
-      } catch (e) {
-        console.error("Error sending user reply to admin:", e);
-        await bot.sendMessage(chatId, "❌ Erreur lors de l'envoi de votre réponse à l'admin.", { reply_to_message_id: msg.message_id });
-      }
-    } else {
-      await bot.sendMessage(chatId, "❌ Action non autorisée.", { reply_to_message_id: msg.message_id });
-    }
-    return;
-  }
-
-  if (replied) {
-    return bot.sendMessage(chatId, getLang("invalidReply"), { reply_to_message_id: msg.message_id });
-  }
 
   if (!args.length) {
     return bot.sendMessage(chatId, getLang("missingMessage"), { reply_to_message_id: msg.message_id });
@@ -194,13 +148,18 @@ async function onStart({ bot, msg, chatId, userId, args }) {
 
   for (const adminId of admins) {
     try {
-      const sent = await sendWithAttachments(bot, adminId, fullText, msg);
-      replyContext.set(sent.message_id, {
+      const { mainMsg, messageIds } = await sendWithAttachments(bot, adminId, fullText, msg);
+      // Stocker le contexte pour tous les messages envoyés (texte + pièces jointes)
+      const contextData = {
         type: "userCallAdmin",
         userThreadId: chatId,
         userMsgId: msg.message_id,
         adminId: adminId
-      });
+      };
+      for (const mid of messageIds) {
+        if (!global.teamnix) global.teamnix = { replies: new Map() };
+        global.teamnix.replies.set(mid, contextData);
+      }
       success.push(adminId);
     } catch (e) {
       failed.push(adminId);
@@ -218,7 +177,67 @@ async function onStart({ bot, msg, chatId, userId, args }) {
   await bot.sendMessage(chatId, resultMsg, { reply_to_message_id: msg.message_id });
 }
 
+async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
+  // data est le contexte stocké dans global.teamnix.replies pour le message auquel on répond
+  if (!data) return;
+
+  const config = loadConfig();
+  const admins = config.admin.map(String);
+  const isAdmin = admins.includes(String(userId));
+  const senderName = msg.from.first_name + (msg.from.last_name ? ` ${msg.from.last_name}` : "");
+
+  const { type, userThreadId, userMsgId, adminId } = data;
+
+  if (type === "userCallAdmin" && isAdmin) {
+    // L'admin répond à un callad
+    const replyText = getLang("reply", senderName, msg.text || " ");
+    try {
+      const { messageIds } = await sendWithAttachments(bot, userThreadId, replyText, msg, userMsgId);
+      // Stocker le contexte pour que l'utilisateur puisse répondre à son tour
+      const contextData = {
+        type: "adminReply",
+        userThreadId: chatId, // le chat de l'admin (pour que l'utilisateur réponde ici)
+        userMsgId: msg.message_id,
+        adminId: userId
+      };
+      for (const mid of messageIds) {
+        if (!global.teamnix) global.teamnix = { replies: new Map() };
+        global.teamnix.replies.set(mid, contextData);
+      }
+      await bot.sendMessage(chatId, getLang("replyUserSuccess"), { reply_to_message_id: msg.message_id });
+    } catch (e) {
+      console.error("Error sending admin reply to user:", e);
+      await bot.sendMessage(chatId, "❌ Erreur lors de l'envoi de la réponse à l'utilisateur.", { reply_to_message_id: msg.message_id });
+    }
+  } else if (type === "adminReply" && !isAdmin) {
+    // L'utilisateur répond à un message de l'admin
+    const groupInfo = chatId > 0 ? "" : await bot.getChat(chatId).then(c => getLang("sendByGroup", c.title, chatId)).catch(() => "");
+    const feedbackText = getLang("feedback", senderName, userId, groupInfo, msg.text || " ");
+    try {
+      const { messageIds } = await sendWithAttachments(bot, adminId, feedbackText, msg);
+      // Stocker le contexte pour que l'admin puisse répondre à nouveau
+      const contextData = {
+        type: "userCallAdmin",
+        userThreadId: chatId,
+        userMsgId: msg.message_id,
+        adminId: userId
+      };
+      for (const mid of messageIds) {
+        if (!global.teamnix) global.teamnix = { replies: new Map() };
+        global.teamnix.replies.set(mid, contextData);
+      }
+      await bot.sendMessage(chatId, getLang("replySuccess"), { reply_to_message_id: msg.message_id });
+    } catch (e) {
+      console.error("Error sending user reply to admin:", e);
+      await bot.sendMessage(chatId, "❌ Erreur lors de l'envoi de votre réponse à l'admin.", { reply_to_message_id: msg.message_id });
+    }
+  } else {
+    await bot.sendMessage(chatId, "❌ Action non autorisée.", { reply_to_message_id: msg.message_id });
+  }
+}
+
 module.exports = {
   nix,
   onStart,
+  onReply,
 };
