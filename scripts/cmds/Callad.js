@@ -103,7 +103,7 @@ const nix = {
   name: "callad",
   aliases: [],
   version: "1.7",
-  author: "NTKhang",
+  author: "Christus",
   description: "Envoyer un rapport, suggestion, bug à l'admin du bot.",
   guide: ["/callad <message>", "Répondre à un message du bot pour échanger"],
   cooldown: 5,
@@ -136,7 +136,7 @@ async function onStart({ bot, msg, chatId, userId, args }) {
     }
   }
 
-  const header = "==📨️ APPEL ADMIN 📨️=="
+  const header = "==📨 APPEL ADMIN 📨=="
     + `\n- Nom : ${senderName}`
     + `\n- ID : ${userId}`
     + (isGroup ? getLang("sendByGroup", groupName, chatId) : getLang("sendByUser"));
@@ -149,8 +149,8 @@ async function onStart({ bot, msg, chatId, userId, args }) {
   for (const adminId of admins) {
     try {
       const { mainMsg, messageIds } = await sendWithAttachments(bot, adminId, fullText, msg);
-      // Stocker le contexte pour tous les messages envoyés (texte + pièces jointes)
       const contextData = {
+        name: nix.name,
         type: "userCallAdmin",
         userThreadId: chatId,
         userMsgId: msg.message_id,
@@ -178,7 +178,6 @@ async function onStart({ bot, msg, chatId, userId, args }) {
 }
 
 async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
-  // data est le contexte stocké dans global.teamnix.replies pour le message auquel on répond
   if (!data) return;
 
   const config = loadConfig();
@@ -189,14 +188,13 @@ async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
   const { type, userThreadId, userMsgId, adminId } = data;
 
   if (type === "userCallAdmin" && isAdmin) {
-    // L'admin répond à un callad
     const replyText = getLang("reply", senderName, msg.text || " ");
     try {
       const { messageIds } = await sendWithAttachments(bot, userThreadId, replyText, msg, userMsgId);
-      // Stocker le contexte pour que l'utilisateur puisse répondre à son tour
       const contextData = {
+        name: nix.name,
         type: "adminReply",
-        userThreadId: chatId, // le chat de l'admin (pour que l'utilisateur réponde ici)
+        userThreadId: chatId,
         userMsgId: msg.message_id,
         adminId: userId
       };
@@ -210,13 +208,12 @@ async function onReply({ bot, message, msg, chatId, userId, data, replyMsg }) {
       await bot.sendMessage(chatId, "❌ Erreur lors de l'envoi de la réponse à l'utilisateur.", { reply_to_message_id: msg.message_id });
     }
   } else if (type === "adminReply" && !isAdmin) {
-    // L'utilisateur répond à un message de l'admin
     const groupInfo = chatId > 0 ? "" : await bot.getChat(chatId).then(c => getLang("sendByGroup", c.title, chatId)).catch(() => "");
     const feedbackText = getLang("feedback", senderName, userId, groupInfo, msg.text || " ");
     try {
       const { messageIds } = await sendWithAttachments(bot, adminId, feedbackText, msg);
-      // Stocker le contexte pour que l'admin puisse répondre à nouveau
       const contextData = {
+        name: nix.name,
         type: "userCallAdmin",
         userThreadId: chatId,
         userMsgId: msg.message_id,
